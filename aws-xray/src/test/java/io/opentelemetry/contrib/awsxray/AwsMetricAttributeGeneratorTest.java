@@ -29,13 +29,12 @@ import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.ReadableSpan;
+import java.util.Collections;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Unit tests for {@link AwsMetricAttributeGenerator}. */
 class AwsMetricAttributeGeneratorTest {
-
-  private static final AwsMetricAttributeGenerator GENERATOR = new AwsMetricAttributeGenerator();
 
   // String constants that are used many times in these tests.
   private static final AttributeKey<String> SERVICE = AttributeKey.stringKey("Service");
@@ -44,6 +43,10 @@ class AwsMetricAttributeGeneratorTest {
       AttributeKey.stringKey("RemoteService");
   private static final AttributeKey<String> REMOTE_OPERATION =
       AttributeKey.stringKey("RemoteOperation");
+  private static final AttributeKey<String> ORIGIN_RESOURCE_TYPE =
+      AttributeKey.stringKey("OriginResourceType");
+  private static final AttributeKey<String> ORIGIN_RESOURCE_ARN =
+      AttributeKey.stringKey("OriginResourceArn");
   private static final AttributeKey<String> SPAN_KIND = AttributeKey.stringKey("span.kind");
   private static final String AWS_LOCAL_OPERATION_VALUE = "AWS local operation";
   private static final String AWS_REMOTE_SERVICE_VALUE = "AWS remote service";
@@ -54,9 +57,13 @@ class AwsMetricAttributeGeneratorTest {
   private static final String UNKNOWN_OPERATION = "UnknownOperation";
   private static final String UNKNOWN_REMOTE_SERVICE = "UnknownRemoteService";
   private static final String UNKNOWN_REMOTE_OPERATION = "UnknownRemoteOperation";
+  private static final String RESOURCE_TYPE = "AWS::Resource::Type";
+  private static final String RESOURCE_ARN = "arn:aws:service:us-east-2:012345678910:resource/123";
 
   private ReadableSpan readableSpanMock;
   private Resource resource;
+  private AwsOriginDetector originDetector;
+  private MetricAttributeGenerator generator;
 
   @BeforeEach
   public void setUpMocks() {
@@ -64,6 +71,9 @@ class AwsMetricAttributeGeneratorTest {
     when(readableSpanMock.getSpanContext()).thenReturn(mock(SpanContext.class));
 
     resource = Resource.empty();
+
+    originDetector = mock(AwsOriginDetector.class);
+    generator = AwsMetricAttributeGenerator.create(Collections.singletonList(originDetector));
   }
 
   @Test
@@ -139,6 +149,23 @@ class AwsMetricAttributeGeneratorTest {
             SPAN_KIND, SpanKind.SERVER.name(),
             SERVICE, SERVICE_NAME_VALUE,
             OPERATION, SPAN_NAME_VALUE);
+    validateAttributesProducedForSpanOfKind(expectedAttributes, SpanKind.SERVER);
+  }
+
+  @Test
+  public void testServerSpanWithAttributesOrigin() {
+    updateResourceWithServiceName();
+    when(readableSpanMock.getName()).thenReturn(SPAN_NAME_VALUE);
+    AwsOrigin origin = new AwsOrigin(RESOURCE_TYPE, RESOURCE_ARN);
+    when(originDetector.detectOrigin(readableSpanMock)).thenReturn(origin);
+
+    Attributes expectedAttributes =
+        Attributes.of(
+            SPAN_KIND, SpanKind.SERVER.name(),
+            SERVICE, SERVICE_NAME_VALUE,
+            OPERATION, SPAN_NAME_VALUE,
+            ORIGIN_RESOURCE_TYPE, RESOURCE_TYPE,
+            ORIGIN_RESOURCE_ARN, RESOURCE_ARN);
     validateAttributesProducedForSpanOfKind(expectedAttributes, SpanKind.SERVER);
   }
 
@@ -250,7 +277,7 @@ class AwsMetricAttributeGeneratorTest {
 
     when(readableSpanMock.getKind()).thenReturn(SpanKind.CLIENT);
     Attributes actualAttributes =
-        GENERATOR.generateMetricAttributesFromSpan(readableSpanMock, resource);
+        generator.generateMetricAttributesFromSpan(readableSpanMock, resource);
     assertThat(actualAttributes.get(REMOTE_SERVICE)).isEqualTo("TestString");
   }
 
@@ -262,7 +289,7 @@ class AwsMetricAttributeGeneratorTest {
       Attributes expectedAttributes, SpanKind kind) {
     when(readableSpanMock.getKind()).thenReturn(kind);
     Attributes actualAttributes =
-        GENERATOR.generateMetricAttributesFromSpan(readableSpanMock, resource);
+        generator.generateMetricAttributesFromSpan(readableSpanMock, resource);
     assertThat(actualAttributes).isEqualTo(expectedAttributes);
   }
 
@@ -274,12 +301,12 @@ class AwsMetricAttributeGeneratorTest {
       String expectedRemoteService, String expectedRemoteOperation) {
     when(readableSpanMock.getKind()).thenReturn(SpanKind.CLIENT);
     Attributes actualAttributes =
-        GENERATOR.generateMetricAttributesFromSpan(readableSpanMock, resource);
+        generator.generateMetricAttributesFromSpan(readableSpanMock, resource);
     assertThat(actualAttributes.get(REMOTE_SERVICE)).isEqualTo(expectedRemoteService);
     assertThat(actualAttributes.get(REMOTE_OPERATION)).isEqualTo(expectedRemoteOperation);
 
     when(readableSpanMock.getKind()).thenReturn(SpanKind.PRODUCER);
-    actualAttributes = GENERATOR.generateMetricAttributesFromSpan(readableSpanMock, resource);
+    actualAttributes = generator.generateMetricAttributesFromSpan(readableSpanMock, resource);
     assertThat(actualAttributes.get(REMOTE_SERVICE)).isEqualTo(expectedRemoteService);
     assertThat(actualAttributes.get(REMOTE_OPERATION)).isEqualTo(expectedRemoteOperation);
   }
@@ -312,7 +339,7 @@ class AwsMetricAttributeGeneratorTest {
     // Validate that peer service value takes precedence over whatever remoteServiceKey was set
     when(readableSpanMock.getKind()).thenReturn(SpanKind.CLIENT);
     Attributes actualAttributes =
-        GENERATOR.generateMetricAttributesFromSpan(readableSpanMock, resource);
+        generator.generateMetricAttributesFromSpan(readableSpanMock, resource);
     assertThat(actualAttributes.get(REMOTE_SERVICE)).isEqualTo("PeerService");
 
     mockAttribute(remoteServiceKey, null);

@@ -14,6 +14,8 @@ import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.api.metrics.MeterProvider;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SpanProcessor;
+import java.util.Arrays;
+import java.util.List;
 
 /** A builder for {@link AwsSpanMetricsProcessor} */
 public final class AwsSpanMetricsProcessorBuilder {
@@ -25,8 +27,10 @@ public final class AwsSpanMetricsProcessorBuilder {
   private static final String LATENCY_UNITS = "Milliseconds";
 
   // Defaults
+  static final List<AwsOriginDetector> DEFAULT_ORIGIN_DETECTORS = Arrays.asList(
+      new AwsSyntheticsCanaryDetector());
   private static final MetricAttributeGenerator DEFAULT_GENERATOR =
-      new AwsMetricAttributeGenerator();
+      AwsMetricAttributeGenerator.create(DEFAULT_ORIGIN_DETECTORS);
   private static final String DEFAULT_SCOPE_NAME = "AwsSpanMetricsProcessor";
 
   // Required builder elements

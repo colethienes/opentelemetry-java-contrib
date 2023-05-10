@@ -28,6 +28,7 @@ import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.ReadableSpan;
 import io.opentelemetry.semconv.resource.attributes.ResourceAttributes;
 import io.opentelemetry.semconv.trace.attributes.SemanticAttributes;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -52,6 +53,10 @@ final class AwsMetricAttributeGenerator implements MetricAttributeGenerator {
       AttributeKey.stringKey("RemoteService");
   private static final AttributeKey<String> REMOTE_OPERATION =
       AttributeKey.stringKey("RemoteOperation");
+  private static final AttributeKey<String> ORIGIN_RESOURCE_TYPE =
+      AttributeKey.stringKey("OriginResourceType");
+  private static final AttributeKey<String> ORIGIN_RESOURCE_ARN =
+      AttributeKey.stringKey("OriginResourceArn");
   private static final AttributeKey<String> SPAN_KIND = AttributeKey.stringKey("span.kind");
 
   // Special SERVICE attribute value if GRAPHQL_OPERATION_TYPE attribute key is present.
@@ -63,6 +68,16 @@ final class AwsMetricAttributeGenerator implements MetricAttributeGenerator {
   private static final String UNKNOWN_REMOTE_SERVICE = "UnknownRemoteService";
   private static final String UNKNOWN_REMOTE_OPERATION = "UnknownRemoteOperation";
 
+  private final List<AwsOriginDetector> originDetectors;
+
+  public static AwsMetricAttributeGenerator create(List<AwsOriginDetector> originDetectors) {
+    return new AwsMetricAttributeGenerator(originDetectors);
+  }
+
+  private AwsMetricAttributeGenerator(List<AwsOriginDetector> originDetectors) {
+    this.originDetectors = originDetectors;
+  }
+
   @Override
   public Attributes generateMetricAttributesFromSpan(ReadableSpan span, Resource resource) {
     AttributesBuilder builder = Attributes.builder();
@@ -71,6 +86,7 @@ final class AwsMetricAttributeGenerator implements MetricAttributeGenerator {
       case SERVER:
         setService(resource, span, builder);
         setIngressOperation(span, builder);
+        setOriginIfDetected(span, builder);
         setSpanKind(span, builder);
         break;
       case PRODUCER:
@@ -94,6 +110,18 @@ final class AwsMetricAttributeGenerator implements MetricAttributeGenerator {
       service = UNKNOWN_SERVICE;
     }
     builder.put(SERVICE, service);
+  }
+
+  /** Detect the AWS resource from which the span originates */
+  private void setOriginIfDetected(ReadableSpan span, AttributesBuilder builder) {
+    for (AwsOriginDetector originDetector : originDetectors) {
+      AwsOrigin origin = originDetector.detectOrigin(span);
+      if (origin != null) {
+        builder.put(ORIGIN_RESOURCE_TYPE, origin.getResourceType());
+        builder.put(ORIGIN_RESOURCE_ARN, origin.getResourceArn());
+        return;
+      }
+    }
   }
 
   /**
